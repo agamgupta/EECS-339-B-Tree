@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <string.h>
 #include "btree.h"
 
 KeyValuePair::KeyValuePair()
@@ -360,6 +361,106 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
   // WRITE ME
   return ERROR_UNIMPL;
 }
+
+// Checks if a node needs to be split (i.e. it is full)
+// Returns True if yes, False if no
+bool BTreeIndex::NeedToSplit(const SIZE_T node)
+{
+  // WRITE ME
+  BTreeNode b;
+  b.Unserialize(buffercache, node);
+
+  // If a node is completely full (i.e. the number keys = the number of slots in the node), return true
+  switch(b.info.nodetype) {
+    case BTREE_ROOT_NODE:
+    case BTREE_INTERIOR_NODE:
+      return (b.info.GetNumSlotsAsInterior() == b.info.numkeys);
+    case BTREE_LEAF_NODE:
+      return (b.info.GetNumSlotsAsLeaf() == b.info.numkeys);
+  }
+  // else return false
+  return false;
+}
+
+// Splits a node and returns the node number for the new (second) node, 
+// as well as the key to be promoted (moved up a level) by the split
+ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &promotedKey)
+  {
+    // WRITE ME
+    BTreeNode left; // "Old"/first node
+    SIZE_T leftKeys;
+    SIZE_T rightKeys;
+    left.Unserialize(buffercache, node);
+    BTreeNode right = left; // "New"/second node
+    ERROR_T error;
+
+    // Allocate and Serialize secondNode
+    // If they do not evaluate to 0 (ERROR_NOERROR), return error
+    if ((error = AllocateNode(secondNode)))
+    {
+      return error;
+    }
+
+    if ((error = right.Serialize(buffercache,secondNode)))
+    {
+      return error;
+    }
+
+    // If the node is a leaf node
+    if (left.info.nodetype == BTREE_LEAF_NODE)
+    {
+      // ceiling of (n+1) / 2 [since leaf nodes have extra pointer at beginning]
+      // n is the number of keys in the original node (left.info.numkeys)
+      leftKeys = (left.info.numkeys + 2) / 2;
+      rightKeys = left.info.numkeys - leftKeys; // remaining keys
+
+      // The key to be promoted by the split
+      left.GetKey(leftKeys - 1, promotedKey);
+
+      // Find the location of the first key in the old (first) node to be moved
+      // into the new (second) node
+      char *oldLoc = left.ResolvePtr(leftKeys);
+      char *newLoc = right.ResolvePtr(0); // first slot in new/second node
+    
+      // copy the keys from the old location into the new location
+      // The amount will be the number of right keys times the summed size of a key and a value
+      memcpy(newLoc, oldLoc, rightKeys * (left.info.keysize + left.info.valuesize));
+    }
+
+    // If the node is an interior or root node
+    else 
+    {
+      // floor of n/2 
+      leftKeys = (left.info.numkeys / 2);
+      rightKeys = left.info.numkeys - leftKeys - 1; // promote one key
+
+      // The key to be promoted by the split
+      left.GetKey(leftKeys, promotedKey);
+      
+      // Find the location of the first key in the old (first) node to be moved
+      // into the new (second) node
+      char *oldLoc = left.ResolvePtr(leftKeys + 1);
+      char *newLoc = right.ResolvePtr(0); // first slot in new/second node
+      
+      // copy the keys from the old location into the new location
+      // The amount will be the number of right keys times the summed size of a key
+      // plus two times the size of SIZE_T on the machine
+      memcpy(newLoc, oldLoc, rightKeys * (left.info.keysize + sizeof(SIZE_T) + sizeof(SIZE_T)));
+    }
+
+    // Update the number of keys in the old and new nodes
+    left.info.numkeys = leftKeys;
+    right.info.numkeys = rightKeys;
+
+    if ((error = left.Serialize(buffercache,node)))
+    {
+      return error;
+    }
+
+    // Write the new node into the disk
+    return right.Serialize(buffercache,secondNode);
+  }
+
   
 ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 {
