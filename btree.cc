@@ -359,7 +359,8 @@ ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
 ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
   // WRITE ME
-  return ERROR_UNIMPL;
+  // find the pointer to the slot the key needs to go
+  return SearchInternal(superblock.info.rootnode, key, value);
 }
 
 // Checks if a node needs to be split (i.e. it is full)
@@ -478,7 +479,69 @@ ERROR_T BTreeIndex::Delete(const KEY_T &key)
   return ERROR_UNIMPL;
 }
 
-  
+Error_T BTreeIndex::SearchInternal(const SIZE_T &node,
+             const KEY_T &key,
+             VALUE_T &value)  
+{
+  BTreeNode b;
+  BTreeNode c;
+  ERROR_T rc;
+  SIZE_T offset;
+  KEY_T testkey;
+  SIZE_T ptr;
+
+  rc= b.Unserialize(buffercache,node);
+
+  if (rc!=ERROR_NOERROR) { 
+    return rc;
+  }
+
+  switch (b.info.nodetype) { 
+  case BTREE_ROOT_NODE:
+  case BTREE_INTERIOR_NODE:
+    // Scan through key/ptr pairs
+    //and recurse if possible
+    for (offset=0;offset<b.info.numkeys;offset++) { 
+      rc=b.GetKey(offset,testkey);
+      if (rc) {  return rc; }
+      if (key<testkey) {
+  // OK, so we now have the first key that's larger
+  // so we need to recurse on the ptr immediately previous to 
+  // this one, if it exists
+  rc=b.GetPtr(offset,ptr);
+  if (rc) { return rc; }
+  return SearchInternal(ptr,op,key,value);
+      }
+    }
+    // if we got here, we need to go to the next pointer, if it exists
+    if (b.info.numkeys>0) { 
+      rc=b.GetPtr(b.info.numkeys,ptr);
+      if (rc) { return rc; }
+      return SearchInternal(ptr,op,key,value);
+    } else {
+      // There are no keys at all on this node, so nowhere to go, return last key
+      return b.GetPtr(b.info.numkeys - 1, ptr);
+    }
+    break;
+  case BTREE_LEAF_NODE:
+    // Scan through keys looking for matching value
+    for (offset=0;offset<b.info.numkeys;offset++) { 
+      rc=b.GetKey(offset,testkey);
+      if (rc) {  return rc; }
+      if (testkey>key) { 
+    return b.GetPtr(offset,ptr);
+      }
+    }
+    return ERROR_NONEXISTENT;
+    break;
+  default:
+    // We can't be looking at anything other than a root, internal, or leaf
+    return ERROR_INSANE;
+    break;
+  }  
+
+  return ERROR_INSANE;
+}
 //
 //
 // DEPTH first traversal
@@ -561,6 +624,12 @@ ERROR_T BTreeIndex::Display(ostream &o, BTreeDisplayType display_type) const
 ERROR_T BTreeIndex::SanityCheck() const
 {
   // WRITE ME
+  // values in leaf nodes are increasing
+  // every pointer in interior nodes can be traced to a value in a leaf node
+  // every pointer in a leaf node is in the data file (change if implement delete?) 
+  // check that it is balanced
+  // check valid use ratio of leaf - 1/2 full? 2/3?
+
   return ERROR_UNIMPL;
 }
   
