@@ -364,7 +364,8 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 {
   // WRITE ME
-  return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, const_cast<VALUE_T&>(value));
+  VALUE_T updateValue = value;
+  return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, updateValue);
 }
 
   
