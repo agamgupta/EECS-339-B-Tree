@@ -492,6 +492,7 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
   SIZE_T offset;
   KEY_T testkey;
   SIZE_T ptr;
+  KEY_T tempKey;
 
   rc= b.Unserialize(buffercache,node);
 
@@ -525,16 +526,21 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
       {
         if(NeedToSplit(node))
         {
+          tempKey = promotedKey;
           SplitNode(node, secondNode, promotedKey);
-          if(promotedKey > key) // then check in node where key needs to be inserted
+          if(promotedKey > tempKey) // then check in node where key needs to be inserted
           {
             for (offset=0;offset<b.info.numkeys;offset++) { 
               rc=b.GetKey(offset,testkey);
               if (rc) {  return rc; }
-              if (testkey>key) { //find the first key that is larger than the key to be inserted
+              if (testkey>tempKey) { //find the first key that is larger than the key to be inserted
                 rc=b.GetPtr(offset,ptr);
                 if (rc) { return rc; }
-                // ***insert key and ptr into testkey's slot***
+                rc = AddKeyVal(node, tempKey, VALUE_T(), ptr);
+                if(rc != ERROR_NOERROR)
+                {
+                  return rc;
+                }
                 return ERROR_NOSPACE; // need to promote it
               }
             }
@@ -550,10 +556,14 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
               for (offset=0;offset<s.info.numkeys;offset++) { 
                 rc=s.GetKey(offset,testkey);
                 if (rc) {  return rc; }
-                if (testkey>key) { //find the first key that is larger than the key to be inserted
+                if (testkey>tempKey) { //find the first key that is larger than the key to be inserted
                 rc = s.GetPtr(offset, ptr);
                 if (rc) { return rc; }
-                // ***insert key and ptr into testkey's slot***
+                rc = AddKeyVal(secondNode, tempKey, VALUE_T(), ptr);
+                if(rc != ERROR_NOERROR)
+                {
+                  return rc;
+                }
                 return ERROR_NOSPACE; // need to promote it
                 }
               } 
@@ -562,46 +572,26 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
         }
         else // no need to split the node, just insert
         {
-          for (offset=0;offset<b.info.numkeys;offset++) { 
-              rc=b.GetKey(offset,testkey);
-              if (rc) {  return rc; }
-              if (testkey>key) { //find the first key that is larger than the key to be inserted
-                rc=b.GetPtr(offset,ptr);
-                if (rc) { return rc; }
-                // ***insert key and ptr into testkey's slot***
-                return ERROR_NOERROR; // no need to promote it
-              }
-            }
+          rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+          if(rc != ERROR_NOERROR)
+          {
+            return rc;
+          }
+          return ERROR_NOERROR; // no need to promote it
+        }
         }
       }
     }
-  }
+  
     // if we got here, we need to go to the next pointer, if it exists
     if (b.info.numkeys>0) { 
       rc=b.GetPtr(b.info.numkeys,ptr);
       if (rc) { return rc; }
-      rc = SearchInternal(ptr,key,value, promotedKey);
-      if(rc == ERROR_NOERROR)
-      {
-        return rc;
-      }
-      else
-      {
-        if(NeedToSplit(node))
-        {
-          SplitNode(node, secondNode, promotedKey);
-          return ERROR_NOSPACE;   // ***need to make new ERROR_T***
-        }
-        else
-        {
-          // ***insert the promoted key and ptr***
-          // no need for more promotion so return no error
-          return ERROR_NOERROR; //***need to make a new ERROR_T***
-        }
-      }
-    } else {
+      return SearchInternal(ptr,key,value, promotedKey);
+    } 
+    else {
       // there are no keys on the node, so this is the first insert. Need to make a leaf node too
-      AllocateNode(newnode); // are leaf nodes one pointer larger?
+      AllocateNode(newnode + sizeof(SIZE_T)); 
       rc = n.Unserialize(buffercache, newnode);
       if (rc!=ERROR_NOERROR) { 
         return rc;
@@ -616,7 +606,7 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
       }
       else
       {
-        // ***insert promotedKey and pointer to leaf node into b
+        AddKeyVal(node, promotedKey, VALUE_T(), ptr);
       }
     }
     break;
@@ -624,7 +614,7 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     // check if this is the first key of the node
     if(b.info.numkeys == 0)
     {
-      // ***insert the key into the first slot***
+      AddKeyVal(node, key, value, 0);
       promotedKey = key; // update the promoted key as the inserted key
       return ERROR_NOSPACE; // ***make a new ERROR_T***
     }
@@ -632,18 +622,18 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     // Otherwise check first if the node needs to be split
     if(NeedToSplit(node))
     {
-      SplitNode(node, secondNode, promotedKey); //this will update promotedKey
+      rc = SplitNode(node, secondNode, promotedKey); //this will update promotedKey
+      if(rc != ERROR_NOERROR)
+      {
+        return rc;
+      }
       if(promotedKey > key) // then check in node where key needs to be inserted
       {
-        for (offset=0;offset<b.info.numkeys;offset++) { 
-          rc=b.GetKey(offset,testkey);
-          if (rc) {  return rc; }
-          if (testkey>key) { //find the first key that is larger than the key to be inserted
-            // ***insert key into testkey's slot***
+            AddKeyVal(node, key, value, 0);
             return ERROR_NOSPACE; // need to promote it
-          }
-        }
       }
+        
+      
       else  // check in secondNode where key needs to be inserted
       {
         rc = s.Unserialize(buffercache, secondNode);
@@ -652,28 +642,20 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
         }
         else
         {
-          for (offset=0;offset<s.info.numkeys;offset++) { 
-            rc=s.GetKey(offset,testkey);
-            if (rc) {  return rc; }
-            if (testkey>key) { //find the first key that is larger than the key to be inserted
-              // ***insert key into testkey's slot***
+              AddKeyVal(secondNode, key, value, 0);
               return ERROR_NOSPACE; // need to promote it
-            }
+            
           }
         }
       }
-    }
+    
     else  // no need to split node, no promotion, just insert it
     {
-      for (offset=0;offset<b.info.numkeys;offset++) { 
-            rc=b.GetKey(offset,testkey);
-            if (rc) {  return rc; }
-            if (testkey>key) { //find the first key that is larger than the key to be inserted
-              // ***insert key into testkey's slot***
-              return ERROR_NOERROR;
-            }
-          }
+        AddKeyVal(node, key, value, 0);
+        return ERROR_NOERROR;
+            
     }
+    
     return ERROR_NONEXISTENT;
     break;
   default:
