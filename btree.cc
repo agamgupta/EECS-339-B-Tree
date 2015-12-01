@@ -582,6 +582,103 @@ Error_T BTreeIndex::SearchInternal(const SIZE_T &node,
 
   return ERROR_INSANE;
 }
+
+// This adds the new key/value pair to a node
+ERROR_T BTreeIndex::AddKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode)
+{
+  BTreeNode b;
+  b.Unserialize(buffercache, node);
+  KEY_T testkey; // This will keep track of the key our current position in the loop
+  SIZE_T numkeys = b.info.numkeys; // the number of keys in the node before we add the new key
+  SIZE_T numToMove; // the number of keys we will need to move over to place our key
+  SIZE_T offset; // This is our current position in the block
+  SIZE_T pairSize; // The size of a key/value pair
+  ERROR_T rc;
+
+  // Check that we have a feasible node type
+  switch(b.info.nodetype){
+    case BTREE_ROOT_NODE:
+    case BTREE_INTERIOR_NODE:
+      pairSize = b.info.keysize + sizeof(SIZE_T);
+      break;
+    case BTREE_LEAF_NODE:
+      pairSize = b.info.keysize + b.info.valuesize;
+      break;
+    default: // We can't be looking at anything other than a root, internal, or leaf
+      return ERROR_INSANE;
+  }
+
+  // increase the number of keys in b by one, since we are adding a key
+  b.info.numkeys++;
+
+  // if the node already has keys in it
+  if(numkeys > 0)
+  {
+    for (offset=0, numToMove = numkeys; offset < numkeys; offset++, numToMove--)
+    {
+      rc = b.GetKey(offset,testkey);
+      if(rc)
+      {
+        return rc;
+      }
+      // If the key we want to add is less than the current key (testkey),
+      // move the keys > key up by a position to make room for key. 
+      // Place key into the current position
+      if(key < testkey)
+      {
+        void *oldLoc = b.ResolveKey(offset);
+        void *newLoc = b.ResolveKey(offset+1);
+        memmove(newLoc,oldLoc,numToMove*pairSize);
+        // if we have problems setting the key, return an error
+        rc = b.SetKey(offset, key);
+        if(rc){return rc;}
+        // Do a few checks based on whether we are dealing with a root or interior node
+        if(b.info.nodetype == BTREE_LEAF_NODE)
+        {
+          rc = b.SetVal(offset,value);
+          if(rc){return rc;}
+        }
+        else // interior node
+        {
+          rc = b.SetPtr(offset+1,newNode);
+          if(rc){return rc;}
+        }
+        break;
+      }
+      // If we get here, we have reached the final slot in the node
+      // Therefore, key becomes the final key in the node
+      if(offset == numkeys - 1)
+      {
+        rc = b.SetKey(numkeys, key);
+        if(rc){return rc;}
+        // Do a few checks based on whether we are dealing with a root or interior node
+        if(b.info.nodetype == BTREE_LEAF_NODE)
+        {
+          rc = b.SetVal(numkeys,value);
+          if(rc){return rc;}
+        }
+        else // interior node
+        {
+          rc = b.SetPtr(numkeys+1,newNode);
+          if(rc){return rc;}
+        }
+        break;
+      }
+    }
+  }
+  else // numkeys == 0, so node is currently empty
+  {
+    rc = b.SetKey(0,key);
+    if(rc){return rc;}
+    rc = b.SetVal(0,value);
+    if(rc){return rc;}
+  }
+
+  // Write the node back into the disk
+  return b.Serialize(buffercache, node);
+
+}
+
 //
 //
 // DEPTH first traversal
