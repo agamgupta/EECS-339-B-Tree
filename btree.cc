@@ -360,7 +360,34 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
   // WRITE ME
   // find the pointer to the slot the key needs to go
-  return SearchInternal(superblock.info.rootnode, key, value);
+  ERROR_T rc;
+
+
+  rc = SearchInternal(superblock.info.rootnode, BTREE_NODE, key, value);
+  if(rc == ERROR_NOERROR)
+  {
+    // helper function to shift and insert key
+  }
+  else
+  {
+    return rc;
+  }
+  // newnode = node;
+  
+  // while(NeedToSplit(node))
+  // {
+  //   SplitNode(node, newnode, promotedKey);
+  //   if(promotedKey > key)
+  //   {
+  //     ptr = SearchInternal(node, BTREE_PTR, key, value);
+  //     //shift and insert helper function
+  //   }
+  //   else
+  //   {
+  //     ptr = SearchInternal(newnode, BTREE_PTR, key, value);
+  //     // shift and insert helper function
+  //   }
+  // }
 }
 
 // Checks if a node needs to be split (i.e. it is full)
@@ -480,6 +507,7 @@ ERROR_T BTreeIndex::Delete(const KEY_T &key)
 }
 
 Error_T BTreeIndex::SearchInternal(const SIZE_T &node,
+             const BTreeSearchType typ,
              const KEY_T &key,
              VALUE_T &value)  
 {
@@ -510,26 +538,38 @@ Error_T BTreeIndex::SearchInternal(const SIZE_T &node,
   // this one, if it exists
   rc=b.GetPtr(offset,ptr);
   if (rc) { return rc; }
-  return SearchInternal(ptr,op,key,value);
+  if(SearchInternal(ptr,typ,key,value)) 
+    {
+      ;
       }
     }
     // if we got here, we need to go to the next pointer, if it exists
     if (b.info.numkeys>0) { 
       rc=b.GetPtr(b.info.numkeys,ptr);
       if (rc) { return rc; }
-      return SearchInternal(ptr,op,key,value);
+      return SearchInternal(ptr,typ,key,value);
     } else {
       // There are no keys at all on this node, so nowhere to go, return last key
-      return b.GetPtr(b.info.numkeys - 1, ptr);
+      if(typ==BTREE_PTR){
+        return b.GetPtr(b.info.numkeys, ptr);
+      }
+      else{
+        return node;
+      }
+      
     }
     break;
   case BTREE_LEAF_NODE:
     // Scan through keys looking for matching value
+    if(b.info.numkeys == 0)
+    {
+      return ERROR_NOERROR;
+    }
     for (offset=0;offset<b.info.numkeys;offset++) { 
       rc=b.GetKey(offset,testkey);
       if (rc) {  return rc; }
       if (testkey>key) { 
-    return b.GetPtr(offset,ptr);
+        
       }
     }
     return ERROR_NONEXISTENT;
