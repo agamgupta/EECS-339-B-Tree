@@ -78,6 +78,11 @@ class BTreeIndex {
 			       const BTreeDisplayType display_type=BTREE_DEPTH) const;
 
   ERROR_T      AddKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode);
+
+  ERROR_T     SanityCheckRecurse(const SIZE_T node, const KEY_T key) const;
+
+  ERROR_T     ConstLookup(const SIZE_T node, const KEY_T key) const;
+
 public:
   //
   // keysize and valueszie should be stored in the 
