@@ -369,7 +369,10 @@ bool BTreeIndex::NeedToSplit(const SIZE_T node)
 {
   // WRITE ME
   BTreeNode b;
-  b.Unserialize(buffercache, node);
+  ERROR_T rc;
+
+  rc = b.Unserialize(buffercache, node);
+  if(rc) { return rc; }
 
   // If a node is completely full (i.e. the number keys = the number of slots in the node), return true
   switch(b.info.nodetype) {
@@ -391,9 +394,11 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
     BTreeNode left; // "Old"/first node
     SIZE_T leftKeys;
     SIZE_T rightKeys;
-    left.Unserialize(buffercache, node);
-    BTreeNode right = left; // "New"/second node
     ERROR_T error;
+    error = left.Unserialize(buffercache, node);
+    if(error) { return rc; }
+    BTreeNode right = left; // "New"/second node
+    
 
     // Allocate and Serialize secondNode
     // If they do not evaluate to 0 (ERROR_NOERROR), return error
@@ -416,8 +421,8 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
       rightKeys = left.info.numkeys - leftKeys; // remaining keys
 
       // The key to be promoted by the split
-      left.GetKey(leftKeys - 1, promotedKey);
-
+      error = left.GetKey(leftKeys - 1, promotedKey);
+      if(error) { return error;}
       // Find the location of the first key in the old (first) node to be moved
       // into the new (second) node
       char *oldLoc = left.ResolvePtr(leftKeys);
@@ -436,8 +441,8 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
       rightKeys = left.info.numkeys - leftKeys - 1; // promote one key
 
       // The key to be promoted by the split
-      left.GetKey(leftKeys, promotedKey);
-      
+      error = left.GetKey(leftKeys, promotedKey);
+      if(error) { return error;}
       // Find the location of the first key in the old (first) node to be moved
       // into the new (second) node
       char *oldLoc = left.ResolvePtr(leftKeys + 1);
