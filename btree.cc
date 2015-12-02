@@ -481,14 +481,14 @@ ERROR_T BTreeIndex::Delete(const KEY_T &key)
 
 ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
              const KEY_T &key,
-             VALUE_T &value,
+             const VALUE_T &value,
              KEY_T &promotedKey)  
 {
   BTreeNode b; // the current node
   SIZE_T newnode = node; // may be used if need to allocate first leaf node
   BTreeNode n;  // may be used as new leaf node
   BTreeNode s; // may be used as the secondnode after split
-  BTreeNode secondNode; // used for splitting
+  SIZE_T secondNode; // used for splitting
   ERROR_T rc;
   SIZE_T offset;
   KEY_T testkey;
@@ -592,7 +592,7 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     } 
     else {
       // there are no keys on the node, so this is the first insert. Need to make a leaf node too
-      AllocateNode(newnode + sizeof(SIZE_T)); 
+      AllocateNode(newnode); 
       rc = n.Unserialize(buffercache, newnode);
       if (rc!=ERROR_NOERROR) { 
         return rc;
@@ -616,6 +616,7 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     if(b.info.numkeys == 0)
     {
       AddKeyVal(node, key, value, 0);
+
       promotedKey = key; // update the promoted key as the inserted key
       return ERROR_NOSPACE; // ***make a new ERROR_T***
     }
