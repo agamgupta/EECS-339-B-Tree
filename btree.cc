@@ -364,6 +364,12 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
     BTreeNode root;
     root.Unserialize(buffercache,superblock.info.rootnode);
 
+    // Variables to hold values in case we need to split the root node (Subcase 2B)
+    VALUE_T temp;
+    SIZE_T originalRoot = superblock.info.rootnode;
+    SIZE_T newNode;
+    KEY_T promotedKey;
+
     // CASE 1: Root is empty, nothing has been inserted yet
     if(root.info.numkeys == 0)
     {
@@ -400,17 +406,67 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 
     }
 
-    // CASE 2: The key does not exist, so we can insert normally
-    // (Make a single call here to SearchInternal2, which handles all the recursion)
-    rc = SearchInternal2(superblock.info.rootnode, key, value, superblock.info.rootnode);
+    // CASE 2: The key does not exist, so we can insert normally using SearchInternal2
+    // First, we must check that the key does not exist in the Btree already, using Lookup
+    if(Lookup(key,temp)==ERROR_NONEXISTENT)
+    {
+      // SUBCASE 2A: "Normal" insert. We do not have to split the root node
+      // (Make a single call here to SearchInternal2, which handles all the recursion and value-placing)
+      rc = SearchInternal2(superblock.info.rootnode, key, value, superblock.info.rootnode);
 
-        // SUBCASE: We need to split the root node 
-        // idea: We can load the original root node data into interior nodes, and then save
-        // the two new interior nodes onto the disk, and then make a new root node, setting
-        // its first key to the promoted key, and then setting its first pointer (0) to the 
-        // left interior node of split and its second pointer (1) to the right interior node of split
+      // SUBCASE 2B: We need to split the root node 
+      // idea: We can load the original root node data into two interior nodes, and then save
+      // the two new interior nodes onto the disk, and then make a new root node, setting
+      // its first key to the promoted key, and then setting its first pointer (0) to the 
+      // left interior node of split and its second pointer (1) to the right interior node of split
+      // (Sort of a similar idea to Case 1)
+      if(NeedToSplit(superblock.info.rootnode))
+      {
+        SplitNode(originalRoot, newNode, promotedKey);
+        // Similar to Attach function. So we want to initialize an interior node type
+        // in order to hold the information previously in the root
+        BTreeNode interior(BTREE_INTERIOR_NODE, 
+          superblock.info.keysize,
+          superblock.info.valuesize,
+          buffercache->GetBlockSize());
 
-    return rc;
+        // Read the data from the original root (split over originalRoot and newNode from the SplitNode function)
+        // Write the two new interior nodes to the disk, using the original root data
+        interior.Unserialize(buffercache, originalRoot);
+        interior.Serialize(buffercache, originalRoot);
+        interior.Unserialize(buffercache, newNode);
+        interior.Serialize(buffercache, newNode);
+
+
+
+
+        // We want to allocate a new empty root node
+        rc = AllocateNode(superblock.info.rootnode);
+        if(rc){return rc;}
+
+        // increment the number of keys in the root by 1 since we are adding a Key
+        // Since this is the first key in the root node, just set numkeys to 1
+        root.info.numkeys = 1;
+        // Take care of setting the first key in root to our promoted key that we found from SplitNode, 
+        // and then set the first key's value to point to the left interior node that used to be the root (originalRoot) 
+        root.SetKey(0,promotedKey);
+        root.SetPtr(0,originalRoot);
+        // Set the next pointer (in the position right after the inserted value pointer) 
+        // to point to the right interior node that used to be the root (newNode).
+        root.SetPtr(1,newNode);
+        // Now write the entire root node block to the disk
+        root.Serialize(buffercache, superblock.info.rootnode);
+
+      }
+      return rc;
+
+
+    }
+    
+    // If we reach this point, then the key must already exist in the tree. There is a conflict.
+    // Instead, Update should be used to solve this issue and change the key's value instead of
+    // Inserting a new key/value pair
+    return ERROR_CONFLICT;
 }
 
 // Checks if a node needs to be split (i.e. it is full)
