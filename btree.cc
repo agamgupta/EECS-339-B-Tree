@@ -359,8 +359,58 @@ ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
 
 ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
-  KEY_T promotedKey;
-  return SearchInternal(superblock.info.rootnode, key, value, promotedKey);
+    // WRITE ME
+    ERROR_T rc;
+    BTreeNode root;
+    root.Unserialize(buffercache,superblock.info.rootnode);
+
+    // CASE 1: Root is empty, nothing has been inserted yet
+    if(root.info.numkeys == 0)
+    {
+      // Similar to Attach function. So we want to attach a leaf node to the root
+      // I.e. When we insert our first item, let's make a leaf node to contain it,
+      // so we don't have a tree with just a root with values.
+      BTreeNode leaf(BTREE_LEAF_NODE,
+        superblock.info.keysize,
+        superblock.info.valuesize,
+        buffercache->GetBlockSize());
+
+      // Now let us allocate two leaf nodes to get the linked list started
+      SIZE_T firstNode;
+      SIZE_T secondNode;
+      rc = AllocateNode(firstNode);
+      if(rc){return rc;}
+      rc = AllocateNode(secondNode);
+      if(rc){return rc;}
+
+      // Write the leaves to the disk
+      leaf.Serialize(buffercache, firstNode);
+      leaf.Serialize(buffercache, secondNode);
+      // increment the number of keys in the root by 1 since we are adding a Key
+      root.info.numkeys += 1;
+      // Take care of setting the first key in root to our input key, and then
+      // set the first key's value to point to the first leaf node. 
+      root.SetKey(0,key);
+      root.SetPtr(0,firstNode);
+      // Set the next pointer (in the position right after the inserted value pointer) 
+      // to point to the second leaf node.
+      root.SetPtr(1,secondNode);
+      // Now write the entire root node block to the disk
+      root.Serialize(buffercache, superblock.info.rootnode);
+
+    }
+
+    // CASE 2: The key does not exist, so we can insert normally
+    // (Make a single call here to SearchInternal2, which handles all the recursion)
+    rc = SearchInternal2(superblock.info.rootnode, key, value, superblock.info.rootnode);
+
+        // SUBCASE: We need to split the root node 
+        // idea: We can load the original root node data into interior nodes, and then save
+        // the two new interior nodes onto the disk, and then make a new root node, setting
+        // its first key to the promoted key, and then setting its first pointer (0) to the 
+        // left interior node of split and its second pointer (1) to the right interior node of split
+
+    return rc;
 }
 
 // Checks if a node needs to be split (i.e. it is full)
@@ -369,10 +419,7 @@ bool BTreeIndex::NeedToSplit(const SIZE_T node)
 {
   // WRITE ME
   BTreeNode b;
-  ERROR_T rc;
-
-  rc = b.Unserialize(buffercache, node);
-  if(rc) { return rc; }
+  b.Unserialize(buffercache, node);
 
   // If a node is completely full (i.e. the number keys = the number of slots in the node), return true
   switch(b.info.nodetype) {
@@ -394,11 +441,9 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
     BTreeNode left; // "Old"/first node
     SIZE_T leftKeys;
     SIZE_T rightKeys;
-    ERROR_T error;
-    error = left.Unserialize(buffercache, node);
-    if(error) { return rc; }
+    left.Unserialize(buffercache, node);
     BTreeNode right = left; // "New"/second node
-    
+    ERROR_T error;
 
     // Allocate and Serialize secondNode
     // If they do not evaluate to 0 (ERROR_NOERROR), return error
@@ -421,8 +466,8 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
       rightKeys = left.info.numkeys - leftKeys; // remaining keys
 
       // The key to be promoted by the split
-      error = left.GetKey(leftKeys - 1, promotedKey);
-      if(error) { return error;}
+      left.GetKey(leftKeys - 1, promotedKey);
+
       // Find the location of the first key in the old (first) node to be moved
       // into the new (second) node
       char *oldLoc = left.ResolvePtr(leftKeys);
@@ -441,8 +486,8 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
       rightKeys = left.info.numkeys - leftKeys - 1; // promote one key
 
       // The key to be promoted by the split
-      error = left.GetKey(leftKeys, promotedKey);
-      if(error) { return error;}
+      left.GetKey(leftKeys, promotedKey);
+      
       // Find the location of the first key in the old (first) node to be moved
       // into the new (second) node
       char *oldLoc = left.ResolvePtr(leftKeys + 1);
@@ -502,7 +547,9 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
 
   rc= b.Unserialize(buffercache,node);
 
-  if (rc) { return rc; }
+  if (rc!=ERROR_NOERROR) { 
+    return rc;
+  }
 
   switch (b.info.nodetype) { 
   case BTREE_ROOT_NODE:
@@ -526,52 +573,67 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
         return rc;
       }
       // if there is a key to be promoted, split the node if necessary and insert the promoted key
-      if(NeedToSplit(node))
+      else
       {
-        tempKey = promotedKey;   //SplitNode will modify promotedKey so need to save it
-        rc = SplitNode(node, secondNode, promotedKey);
-        if(rc) { return rc; }
-        if(tempKey < promotedKey) // then check in node where key needs to be inserted
+        if(NeedToSplit(node))
         {
-          for (offset=0;offset<b.info.numkeys;offset++) { 
-            rc=b.GetKey(offset,testkey);
-            if (rc) {  return rc; }
-            if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
-              rc=b.GetPtr(offset,ptr);
-              if (rc) { return rc; }
-              rc = AddKeyVal(node, tempKey, VALUE_T(), ptr);
-              if(rc) {  return rc; }
-              return ERROR_NOSPACE; // need to promote it
+          tempKey = promotedKey;
+          SplitNode(node, secondNode, promotedKey);
+          if(tempKey<promotedKey) // then check in node where key needs to be inserted
+          {
+            for (offset=0;offset<b.info.numkeys;offset++) { 
+              rc=b.GetKey(offset,testkey);
+              if (rc) {  return rc; }
+              if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
+                rc=b.GetPtr(offset,ptr);
+                if (rc) { return rc; }
+                rc = AddKeyVal(node, tempKey, VALUE_T(), ptr);
+                if(rc != ERROR_NOERROR)
+                {
+                  return rc;
+                }
+                return ERROR_NOSPACE; // need to promote it
+              }
             }
           }
-        }  
-        else  // check in secondNode where key needs to be inserted
-        {
-          rc = s.Unserialize(buffercache, secondNode);
-          if (rc) { return rc; }
-          for (offset=0;offset<s.info.numkeys;offset++) { 
-            rc=s.GetKey(offset,testkey);
-            if (rc) {  return rc; }
-            if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
-              rc = s.GetPtr(offset, ptr);
-              if (rc) { return rc; }
-              rc = AddKeyVal(secondNode, tempKey, VALUE_T(), ptr);
-              if(rc){ return rc; }
-              return ERROR_NOSPACE; // need to promote it
+          else  // check in secondNode where key needs to be inserted
+          {
+            rc = s.Unserialize(buffercache, secondNode);
+            if (rc!=ERROR_NOERROR) { 
+              return rc;
             }
-          } 
+            else
+            {
+              for (offset=0;offset<s.info.numkeys;offset++) { 
+                rc=s.GetKey(offset,testkey);
+                if (rc) {  return rc; }
+                if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
+                rc = s.GetPtr(offset, ptr);
+                if (rc) { return rc; }
+                rc = AddKeyVal(secondNode, tempKey, VALUE_T(), ptr);
+                if(rc != ERROR_NOERROR)
+                {
+                  return rc;
+                }
+                return ERROR_NOSPACE; // need to promote it
+                }
+              } 
+            }
+          }
+        }
+        else // no need to split the node, just insert
+        {
+          rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+          if(rc != ERROR_NOERROR)
+          {
+            return rc;
+          }
+          return ERROR_NOERROR; // no need to promote it
+        }
         }
       }
-        
-      else // no need to split the node, just insert
-      {
-        rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
-        if(rc) { return rc; }
-        return ERROR_NOERROR; // no need to promote it
-      }
-      }
     }
-      
+  
     // if we got here, we need to go to the next pointer, if it exists
     if (b.info.numkeys>0) { 
       rc=b.GetPtr(b.info.numkeys,ptr);
@@ -580,19 +642,22 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     } 
     else {
       // there are no keys on the node, so this is the first insert. Need to make a leaf node too
-      rc = AllocateNode(newnode); 
-      if(rc) { return rc; }
+      AllocateNode(newnode); 
       rc = n.Unserialize(buffercache, newnode);
-      if (rc) { return rc; }
-      n.info.nodetype = BTREE_LEAF_NODE;      // make it a leaf node
-      rc = SearchInternal(newnode, key, value, promotedKey);
-      if (rc == ERROR_NOERROR) { 
+      if (rc!=ERROR_NOERROR) { 
         return rc;
       }
       else
       {
-        rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
-        if(rc) { return rc; }
+        n.info.nodetype = BTREE_LEAF_NODE;      // make it a leaf node
+      }
+      rc = SearchInternal(newnode, key, value, promotedKey);
+      if (rc!=ERROR_NOERROR) { 
+        return rc;
+      }
+      else
+      {
+        AddKeyVal(node, promotedKey, VALUE_T(), ptr);
       }
     }
     break;
@@ -600,42 +665,143 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     // check if this is the first key of the node
     if(b.info.numkeys == 0)
     {
-      rc = AddKeyVal(node, key, value, 0);
-      if(rc) { return rc; }
+      AddKeyVal(node, key, value, 0);
       promotedKey = key; // update the promoted key as the inserted key
-      return ERROR_NOSPACE; 
+      return ERROR_NOSPACE; // ***make a new ERROR_T***
     }
     
     // Otherwise check first if the node needs to be split
     if(NeedToSplit(node))
     {
       rc = SplitNode(node, secondNode, promotedKey); //this will update promotedKey
-      if(rc) { return rc; }
-      if(key < promotedKey) // then check in node where key needs to be inserted
+      if(rc != ERROR_NOERROR)
       {
-          rc = AddKeyVal(node, key, value, 0);
-          if(rc) { return rc; }
-          return ERROR_NOSPACE; // need to promote it
+        return rc;
+      }
+      if(key<promotedKey) // then check in node where key needs to be inserted
+      {
+            AddKeyVal(node, key, value, 0);
+            return ERROR_NOSPACE; // need to promote it
       }
         
+      
       else  // check in secondNode where key needs to be inserted
       {
         rc = s.Unserialize(buffercache, secondNode);
-        if (rc) { return rc; }
-        rc = AddKeyVal(secondNode, key, value, 0);
-        if(rc) { return rc; }
-        return ERROR_NOSPACE; // need to promote it
+        if (rc!=ERROR_NOERROR) { 
+          return rc;
+        }
+        else
+        {
+              AddKeyVal(secondNode, key, value, 0);
+              return ERROR_NOSPACE; // need to promote it
+            
+          }
+        }
       }
-    }
     
     else  // no need to split node, no promotion, just insert it
     {
-      rc = AddKeyVal(node, key, value, 0);
-      if(rc) { return rc; }
-      return ERROR_NOERROR;
+        AddKeyVal(node, key, value, 0);
+        return ERROR_NOERROR;
+            
     }
     
     return ERROR_NONEXISTENT;
+    break;
+  default:
+    // We can't be looking at anything other than a root, internal, or leaf
+    return ERROR_INSANE;
+    break;
+  }  
+
+  return ERROR_INSANE;
+}
+
+// Handles the recursive traversal of the tree, and placing the key/value pair in the correct node
+ERROR_T BTreeIndex::SearchInternal2(SIZE_T node,
+             const KEY_T &key,
+             const VALUE_T &value,
+             SIZE_T parentNode)  
+{
+  BTreeNode b; // the current node
+  SIZE_T secondNode; 
+  ERROR_T rc;
+  SIZE_T offset;
+  KEY_T testkey;
+  SIZE_T ptr;
+  KEY_T promotedKey;
+
+  rc= b.Unserialize(buffercache,node);
+
+  if (rc!=ERROR_NOERROR) { 
+    return rc;
+  }
+
+  switch (b.info.nodetype) { 
+  case BTREE_ROOT_NODE:
+  case BTREE_INTERIOR_NODE:
+    // Scan through key/ptr pairs
+    //and recurse if possible
+    for (offset=0;offset<b.info.numkeys;offset++) { 
+      rc=b.GetKey(offset,testkey);
+      if (rc) {  return rc; }
+      if (key<testkey || key == testkey) {
+  // OK, so we now have the first key that's larger
+  // so we need to recurse on the ptr immediately previous to 
+  // this one, if it exists
+      rc=b.GetPtr(offset,ptr);
+      if (rc) { return rc; }
+      // check if a key needs to be promoted from leaf
+      rc = SearchInternal2(ptr, key, value, node);
+      
+      if(rc){return rc;}
+      // if there is a key to be promoted, split the node if necessary and insert the promoted key
+      
+        // check if we need to split the node
+        if(NeedToSplit(ptr))
+        {
+          rc = SplitNode(ptr, secondNode, promotedKey);
+          if(rc){return rc;}
+          // Add the key/value (pointer) pair into an interior node
+          return AddKeyVal(node, promotedKey, VALUE_T(), secondNode);
+
+          
+          
+        }
+        else // no need to split the node, just insert
+        {
+          return rc;
+        }
+        
+      }
+    }
+  
+    // if we got here, we need to go to the next pointer, if it exists
+    if (b.info.numkeys>0) { 
+      rc=b.GetPtr(b.info.numkeys,ptr);
+      if (rc) { return rc; }
+      rc = SearchInternal2(ptr,key,value, node);
+      if (rc) {return rc;}
+      if (NeedToSplit(ptr)){
+        rc = SplitNode(ptr, secondNode, promotedKey);
+        if (rc){return rc;}
+        // Add the key/value (pointer) pair into an interior node
+        return AddKeyVal(node, promotedKey, VALUE_T(), secondNode);
+      } 
+      else 
+        {
+          return rc;
+        }
+    } 
+    else {
+      // there are no keys on the node, so this is the first insert. Need to make a leaf node too
+     return ERROR_NONEXISTENT;
+    }
+    break;
+  case BTREE_LEAF_NODE:
+    // Add a key/value pair into a leaf node
+    return AddKeyVal(node,key,value,0);
     break;
   default:
     // We can't be looking at anything other than a root, internal, or leaf
@@ -828,6 +994,7 @@ ERROR_T BTreeIndex::SanityCheck() const
   // every pointer in interior nodes can be traced to a value in a leaf node
   // every pointer in a leaf node is in the data file (change if implement delete?) 
   // check that it is balanced
+  // check valid use ratio of leaf - 1/2 full? 2/3?
 
   return ERROR_UNIMPL;
 }
