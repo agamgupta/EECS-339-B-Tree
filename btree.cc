@@ -497,9 +497,7 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
 
   rc= b.Unserialize(buffercache,node);
 
-  if (rc!=ERROR_NOERROR) { 
-    return rc;
-  }
+  if (rc) { return rc; }
 
   switch (b.info.nodetype) { 
   case BTREE_ROOT_NODE:
@@ -523,67 +521,52 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
         return rc;
       }
       // if there is a key to be promoted, split the node if necessary and insert the promoted key
-      else
+      if(NeedToSplit(node))
       {
-        if(NeedToSplit(node))
+        tempKey = promotedKey;   //SplitNode will modify promotedKey so need to save it
+        rc = SplitNode(node, secondNode, promotedKey);
+        if(rc) { return rc; }
+        if(tempKey < promotedKey) // then check in node where key needs to be inserted
         {
-          tempKey = promotedKey;
-          SplitNode(node, secondNode, promotedKey);
-          if(promotedKey > tempKey) // then check in node where key needs to be inserted
-          {
-            for (offset=0;offset<b.info.numkeys;offset++) { 
-              rc=b.GetKey(offset,testkey);
-              if (rc) {  return rc; }
-              if (testkey>tempKey) { //find the first key that is larger than the key to be inserted
-                rc=b.GetPtr(offset,ptr);
-                if (rc) { return rc; }
-                rc = AddKeyVal(node, tempKey, VALUE_T(), ptr);
-                if(rc != ERROR_NOERROR)
-                {
-                  return rc;
-                }
-                return ERROR_NOSPACE; // need to promote it
-              }
+          for (offset=0;offset<b.info.numkeys;offset++) { 
+            rc=b.GetKey(offset,testkey);
+            if (rc) {  return rc; }
+            if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
+              rc=b.GetPtr(offset,ptr);
+              if (rc) { return rc; }
+              rc = AddKeyVal(node, tempKey, VALUE_T(), ptr);
+              if(rc) {  return rc; }
+              return ERROR_NOSPACE; // need to promote it
             }
           }
-          else  // check in secondNode where key needs to be inserted
-          {
-            rc = s.Unserialize(buffercache, secondNode);
-            if (rc!=ERROR_NOERROR) { 
-              return rc;
-            }
-            else
-            {
-              for (offset=0;offset<s.info.numkeys;offset++) { 
-                rc=s.GetKey(offset,testkey);
-                if (rc) {  return rc; }
-                if (testkey>tempKey) { //find the first key that is larger than the key to be inserted
-                rc = s.GetPtr(offset, ptr);
-                if (rc) { return rc; }
-                rc = AddKeyVal(secondNode, tempKey, VALUE_T(), ptr);
-                if(rc != ERROR_NOERROR)
-                {
-                  return rc;
-                }
-                return ERROR_NOSPACE; // need to promote it
-                }
-              } 
-            }
-          }
-        }
-        else // no need to split the node, just insert
+        }  
+        else  // check in secondNode where key needs to be inserted
         {
-          rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
-          if(rc != ERROR_NOERROR)
-          {
-            return rc;
-          }
-          return ERROR_NOERROR; // no need to promote it
-        }
+          rc = s.Unserialize(buffercache, secondNode);
+          if (rc) { return rc; }
+          for (offset=0;offset<s.info.numkeys;offset++) { 
+            rc=s.GetKey(offset,testkey);
+            if (rc) {  return rc; }
+            if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
+              rc = s.GetPtr(offset, ptr);
+              if (rc) { return rc; }
+              rc = AddKeyVal(secondNode, tempKey, VALUE_T(), ptr);
+              if(rc){ return rc; }
+              return ERROR_NOSPACE; // need to promote it
+            }
+          } 
         }
       }
+        
+      else // no need to split the node, just insert
+      {
+        rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+        if(rc) { return rc; }
+        return ERROR_NOERROR; // no need to promote it
+      }
+      }
     }
-  
+      
     // if we got here, we need to go to the next pointer, if it exists
     if (b.info.numkeys>0) { 
       rc=b.GetPtr(b.info.numkeys,ptr);
@@ -592,22 +575,19 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     } 
     else {
       // there are no keys on the node, so this is the first insert. Need to make a leaf node too
-      AllocateNode(newnode); 
+      rc = AllocateNode(newnode); 
+      if(rc) { return rc; }
       rc = n.Unserialize(buffercache, newnode);
-      if (rc!=ERROR_NOERROR) { 
-        return rc;
-      }
-      else
-      {
-        n.info.nodetype = BTREE_LEAF_NODE;      // make it a leaf node
-      }
+      if (rc) { return rc; }
+      n.info.nodetype = BTREE_LEAF_NODE;      // make it a leaf node
       rc = SearchInternal(newnode, key, value, promotedKey);
-      if (rc!=ERROR_NOERROR) { 
+      if (rc == ERROR_NOERROR) { 
         return rc;
       }
       else
       {
-        AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+        rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+        if(rc) { return rc; }
       }
     }
     break;
@@ -615,47 +595,39 @@ ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
     // check if this is the first key of the node
     if(b.info.numkeys == 0)
     {
-      AddKeyVal(node, key, value, 0);
-
+      rc = AddKeyVal(node, key, value, 0);
+      if(rc) { return rc; }
       promotedKey = key; // update the promoted key as the inserted key
-      return ERROR_NOSPACE; // ***make a new ERROR_T***
+      return ERROR_NOSPACE; 
     }
     
     // Otherwise check first if the node needs to be split
     if(NeedToSplit(node))
     {
       rc = SplitNode(node, secondNode, promotedKey); //this will update promotedKey
-      if(rc != ERROR_NOERROR)
+      if(rc) { return rc; }
+      if(key < promotedKey) // then check in node where key needs to be inserted
       {
-        return rc;
-      }
-      if(promotedKey > key) // then check in node where key needs to be inserted
-      {
-            AddKeyVal(node, key, value, 0);
-            return ERROR_NOSPACE; // need to promote it
+          rc = AddKeyVal(node, key, value, 0);
+          if(rc) { return rc; }
+          return ERROR_NOSPACE; // need to promote it
       }
         
-      
       else  // check in secondNode where key needs to be inserted
       {
         rc = s.Unserialize(buffercache, secondNode);
-        if (rc!=ERROR_NOERROR) { 
-          return rc;
-        }
-        else
-        {
-              AddKeyVal(secondNode, key, value, 0);
-              return ERROR_NOSPACE; // need to promote it
-            
-          }
-        }
+        if (rc) { return rc; }
+        rc = AddKeyVal(secondNode, key, value, 0);
+        if(rc) { return rc; }
+        return ERROR_NOSPACE; // need to promote it
       }
+    }
     
     else  // no need to split node, no promotion, just insert it
     {
-        AddKeyVal(node, key, value, 0);
-        return ERROR_NOERROR;
-            
+      rc = AddKeyVal(node, key, value, 0);
+      if(rc) { return rc; }
+      return ERROR_NOERROR;
     }
     
     return ERROR_NONEXISTENT;
@@ -851,7 +823,6 @@ ERROR_T BTreeIndex::SanityCheck() const
   // every pointer in interior nodes can be traced to a value in a leaf node
   // every pointer in a leaf node is in the data file (change if implement delete?) 
   // check that it is balanced
-  // check valid use ratio of leaf - 1/2 full? 2/3?
 
   return ERROR_UNIMPL;
 }
