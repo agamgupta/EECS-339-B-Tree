@@ -64,8 +64,8 @@ class BTreeIndex {
   
   ERROR_T      SearchInternal(const SIZE_T &node,
              const KEY_T &key,
-             VALUE_T &value,
-             KEY_T &promotedKey)
+             const VALUE_T &value,
+             KEY_T &promotedKey);
 
   ERROR_T      DisplayInternal(const SIZE_T &node,
 			       ostream &o, 
