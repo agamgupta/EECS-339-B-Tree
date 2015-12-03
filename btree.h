@@ -83,6 +83,10 @@ class BTreeIndex {
 
   ERROR_T     ConstLookup(const SIZE_T node, const KEY_T key) const;
 
+  ERROR_T     DeleteRecurse(const KEY_T &key, const SIZE_T node, KEY_T &promotedKey);
+
+  ERROR_T     DeleteAndShift(const SIZE_T node, const KEY_T &key);
+
 public:
   //
   // keysize and valueszie should be stored in the 

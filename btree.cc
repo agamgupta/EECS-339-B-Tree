@@ -579,10 +579,165 @@ ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
   
 ERROR_T BTreeIndex::Delete(const KEY_T &key)
 {
-  // This is optional extra credit 
-  //
-  // 
-  return ERROR_UNIMPL;
+  BTreeNode b;
+  ERROR_T rc;
+  SIZE_T offset;
+  KEY_T testkey1;
+  SIZE_T ptr;
+  VALUE_T value;
+  KEY_T promotedKey;
+
+  // check if the key is in the tree
+  rc = Lookup(key, value);
+  if(rc) { return rc;}
+
+  // start at the root node
+  rc = b.Unserialize(buffercache, b.info.rootnode);
+  if(rc) { return rc;}
+
+  for (offset=0;offset<b.info.numkeys;offset++) { 
+    rc = b.GetKey(offset, testkey1);
+    if (rc) {  return rc; }
+    if(testkey1 == key) // will need to update from the child
+    {
+      rc = b.GetPtr(offset, ptr);
+      if(rc) { return rc;}
+      rc = DeleteRecurse(key, ptr, promotedKey);
+      if(rc) { return rc;}
+      rc = b.SetKey(offset, promotedKey);
+      if(rc) { return rc;}
+      rc = b.SetPtr(offset, ptr);
+      if(rc) { return rc;}
+      return ERROR_NOERROR;
+    }
+    if(key < testkey1)  // just delete from descendants
+    {
+      rc = b.GetPtr(offset, ptr);
+      if(rc) { return rc;}
+      return DeleteRecurse(key, ptr, promotedKey);
+    }
+    }
+    
+  return ERROR_NONEXISTENT;
+}
+
+ERROR_T BTreeIndex::DeleteRecurse(const KEY_T &key, const SIZE_T node, KEY_T &promotedKey)
+{
+  BTreeNode b;
+  ERROR_T rc;
+  SIZE_T offset;
+  KEY_T testkey1;
+  SIZE_T ptr;
+
+  rc = b.Unserialize(buffercache, node);
+  if(rc) { return rc;}
+
+  switch(b.info.nodetype){
+    case BTREE_ROOT_NODE:
+    case BTREE_INTERIOR_NODE:
+      for (offset=0;offset<b.info.numkeys;offset++) { 
+        rc = b.GetKey(offset, testkey1);
+        if (rc) {  return rc; }
+        if(testkey1 == key) // will need to update from the child node
+        {
+          rc = b.GetPtr(offset, ptr);
+          if(rc) { return rc;}
+          rc = DeleteRecurse(key, ptr, promotedKey);
+          if(rc) { return rc;}
+          rc = b.SetKey(offset, promotedKey);
+          if(rc) { return rc;}
+          rc = b.SetPtr(offset, ptr);
+          if(rc) { return rc;}
+          return ERROR_NOERROR;
+        }
+        
+        if(key < testkey1)  // just delete from descendants
+        {
+          rc = b.GetPtr(offset, ptr);
+          if(rc) { return rc;}
+          return DeleteRecurse(key, ptr, promotedKey);
+        }
+      }
+      // if we got here, we need to go to the next pointer, if it exists
+      if (b.info.numkeys>0) { 
+      rc=b.GetPtr(b.info.numkeys,ptr);
+      if (rc) { return rc; }
+      return DeleteRecurse(key,ptr, promotedKey);
+    } else {
+      // There are no keys at all on this node, so nowhere to go
+      return ERROR_NONEXISTENT;
+    }
+      break;
+    case BTREE_LEAF_NODE:
+      for (offset=0;offset<b.info.numkeys;offset++) { 
+        rc = b.GetKey(offset, testkey1);
+        if (rc) {  return rc; }
+        if(testkey1 == key) 
+        {
+          if(offset == b.info.numkeys - 1)
+          {
+            rc = b.GetKey(offset - 1, promotedKey);
+            if(rc) { return rc;} 
+            return DeleteAndShift(node, key);
+          }
+          return DeleteAndShift(node, key);          
+        }
+      }
+      return ERROR_NONEXISTENT;
+      break;
+    default:
+      return ERROR_INSANE;
+      break;
+    }
+    return ERROR_INSANE;
+}
+
+ERROR_T BTreeIndex::DeleteAndShift(const SIZE_T node, const KEY_T &key)
+{
+  BTreeNode b;
+  ERROR_T rc;
+  SIZE_T offset;
+  KEY_T testkey1;
+  SIZE_T ptr;
+
+  rc = b.Unserialize(buffercache, node);
+  if(rc) { return rc;}
+  
+  switch (b.info.nodetype) { 
+    case BTREE_ROOT_NODE:
+    case BTREE_INTERIOR_NODE:
+      for (offset=0;offset<b.info.numkeys;offset++) { 
+        rc = b.GetKey(offset, testkey1);
+        if (rc) {  return rc; }
+        if(testkey1 == key) 
+        {
+            char *oldLoc = b.ResolvePtr(b.info.numkeys);
+            char *newLoc = b.ResolvePtr(offset);
+            memcpy(newLoc, oldLoc, (b.info.GetNumSlotsAsInterior() - offset) * (b.info.keysize + b.info.valuesize));
+            return ERROR_NOERROR;
+          }
+      }
+      return ERROR_NONEXISTENT;
+      break;
+    case BTREE_LEAF_NODE:
+      for (offset=0;offset<b.info.numkeys;offset++) { 
+        rc = b.GetKey(offset, testkey1);
+        if (rc) {  return rc; }
+        if(testkey1 == key) 
+        {
+            char *oldLoc = b.ResolveVal(offset++);
+            char *newLoc = b.ResolveVal(offset);
+            memcpy(newLoc, oldLoc, (b.info.GetNumSlotsAsLeaf() - offset) * (b.info.keysize + b.info.valuesize));
+            return ERROR_NOERROR;
+          }
+        }
+      return ERROR_NONEXISTENT;
+      break;
+    default:
+      return ERROR_INSANE;
+      break;
+  }
+
 }
 
 
