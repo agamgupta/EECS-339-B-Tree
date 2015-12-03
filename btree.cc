@@ -526,8 +526,8 @@ ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &secondNode, KEY_T &prom
 
       // Find the location of the first key in the old (first) node to be moved
       // into the new (second) node
-      char *oldLoc = left.ResolvePtr(leftKeys);
-      char *newLoc = right.ResolvePtr(0); // first slot in new/second node
+      char *oldLoc = left.ResolveKeyVal(leftKeys);
+      char *newLoc = right.ResolveKeyVal(0); // first slot in new/second node
     
       // copy the keys from the old location into the new location
       // The amount will be the number of right keys times the summed size of a key and a value
