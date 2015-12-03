@@ -698,7 +698,6 @@ ERROR_T BTreeIndex::DeleteAndShift(const SIZE_T node, const KEY_T &key)
   ERROR_T rc;
   SIZE_T offset;
   KEY_T testkey1;
-  SIZE_T ptr;
 
   rc = b.Unserialize(buffercache, node);
   if(rc) { return rc;}
@@ -737,6 +736,8 @@ ERROR_T BTreeIndex::DeleteAndShift(const SIZE_T node, const KEY_T &key)
       return ERROR_INSANE;
       break;
   }
+
+  return ERROR_INSANE;
 
 }
 
