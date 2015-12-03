@@ -903,7 +903,7 @@ ERROR_T BTreeIndex::SanityCheck() const
       if (rc) {  return rc; }
 
       // check for errors on each of the children
-      rc = SanityCheckRecurse(ptr, testkey1, count);
+      rc = SanityCheckRecurse(ptr, testkey1, count, false);
       if (rc) {  return rc; }
       
       // check that the tree is balanced
@@ -920,7 +920,7 @@ ERROR_T BTreeIndex::SanityCheck() const
   return ERROR_NOERROR;
 }
   
-ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &count) const
+ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &count, const bool split) const
 {
   BTreeNode b;
   ERROR_T rc;
@@ -929,6 +929,7 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
   KEY_T testkey2;
   SIZE_T ptr;
   VALUE_T value;
+  SIZE_T slots;
 
   rc = b.Unserialize(buffercache, node);
   if (rc) {  return rc; }
@@ -947,6 +948,11 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
     // can't have two roots
       return ERROR_BADCONFIG;
     case BTREE_INTERIOR_NODE:
+      slots = b.info.GetNumSlotsAsInterior();
+      if(b.info.numkeys < (slots/2))
+      {
+        return ERROR_BADCONFIG;
+      }
       for (offset=0;offset<b.info.numkeys;offset++) { 
       rc=b.GetPtr(offset,ptr);    // will return error if the pairs are not key-ptr
       if (rc) {  return rc; }
@@ -968,7 +974,7 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
 
       // check for errors on each of the children
       count = count + 1;
-      rc = SanityCheckRecurse(ptr, testkey1, count);
+      rc = SanityCheckRecurse(ptr, testkey1, count, true);
       if (rc) {  return rc; }
     }
 
@@ -982,6 +988,11 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
     break;
     
     case BTREE_LEAF_NODE:
+      slots = b.info.GetNumSlotsAsLeaf();
+      if((split == true) && (b.info.numkeys < (slots + 2)/2))
+      {
+        return ERROR_BADCONFIG;
+      }
       for (offset=0;offset<b.info.numkeys;offset++) { 
       rc=b.GetVal(offset,value);    // will return error if the pairs are not key-value
       if (rc) {  return rc; }
