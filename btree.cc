@@ -585,7 +585,194 @@ ERROR_T BTreeIndex::Delete(const KEY_T &key)
   return ERROR_UNIMPL;
 }
 
+ERROR_T BTreeIndex::SearchInternal(const SIZE_T &node,
+             const KEY_T &key,
+             const VALUE_T &value,
+             KEY_T &promotedKey)  
+{
+  BTreeNode b; // the current node
+  SIZE_T newnode = node; // may be used if need to allocate first leaf node
+  BTreeNode n;  // may be used as new leaf node
+  BTreeNode s; // may be used as the secondnode after split
+  SIZE_T secondNode; // used for splitting
+  ERROR_T rc;
+  SIZE_T offset;
+  KEY_T testkey;
+  SIZE_T ptr;
+  KEY_T tempKey;
 
+  rc= b.Unserialize(buffercache,node);
+
+  if (rc!=ERROR_NOERROR) { 
+    return rc;
+  }
+
+  switch (b.info.nodetype) { 
+  case BTREE_ROOT_NODE:
+  case BTREE_INTERIOR_NODE:
+    // Scan through key/ptr pairs
+    //and recurse if possible
+    for (offset=0;offset<b.info.numkeys;offset++) { 
+      rc=b.GetKey(offset,testkey);
+      if (rc) {  return rc; }
+      if (key<testkey) {
+  // OK, so we now have the first key that's larger
+  // so we need to recurse on the ptr immediately previous to 
+  // this one, if it exists
+      rc=b.GetPtr(offset,ptr);
+      if (rc) { return rc; }
+      // check if a key needs to be promoted from leaf
+      rc = SearchInternal(ptr, key, value, promotedKey);
+      
+      if(rc == ERROR_NOERROR) // if no insertion necessary, return no error
+      {
+        return rc;
+      }
+      // if there is a key to be promoted, split the node if necessary and insert the promoted key
+      else
+      {
+        if(NeedToSplit(node))
+        {
+          tempKey = promotedKey;
+          SplitNode(node, secondNode, promotedKey);
+          if(tempKey<promotedKey) // then check in node where key needs to be inserted
+          {
+            for (offset=0;offset<b.info.numkeys;offset++) { 
+              rc=b.GetKey(offset,testkey);
+              if (rc) {  return rc; }
+              if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
+                rc=b.GetPtr(offset,ptr);
+                if (rc) { return rc; }
+                rc = AddKeyVal(node, tempKey, VALUE_T(), ptr);
+                if(rc != ERROR_NOERROR)
+                {
+                  return rc;
+                }
+                return ERROR_NOSPACE; // need to promote it
+              }
+            }
+          }
+          else  // check in secondNode where key needs to be inserted
+          {
+            rc = s.Unserialize(buffercache, secondNode);
+            if (rc!=ERROR_NOERROR) { 
+              return rc;
+            }
+            else
+            {
+              for (offset=0;offset<s.info.numkeys;offset++) { 
+                rc=s.GetKey(offset,testkey);
+                if (rc) {  return rc; }
+                if (tempKey<testkey) { //find the first key that is larger than the key to be inserted
+                rc = s.GetPtr(offset, ptr);
+                if (rc) { return rc; }
+                rc = AddKeyVal(secondNode, tempKey, VALUE_T(), ptr);
+                if(rc != ERROR_NOERROR)
+                {
+                  return rc;
+                }
+                return ERROR_NOSPACE; // need to promote it
+                }
+              } 
+            }
+          }
+        }
+        else // no need to split the node, just insert
+        {
+          rc = AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+          if(rc != ERROR_NOERROR)
+          {
+            return rc;
+          }
+          return ERROR_NOERROR; // no need to promote it
+        }
+        }
+      }
+    }
+  
+    // if we got here, we need to go to the next pointer, if it exists
+    if (b.info.numkeys>0) { 
+      rc=b.GetPtr(b.info.numkeys,ptr);
+      if (rc) { return rc; }
+      return SearchInternal(ptr,key,value, promotedKey);
+    } 
+    else {
+      // there are no keys on the node, so this is the first insert. Need to make a leaf node too
+      AllocateNode(newnode); 
+      rc = n.Unserialize(buffercache, newnode);
+      if (rc!=ERROR_NOERROR) { 
+        return rc;
+      }
+      else
+      {
+        n.info.nodetype = BTREE_LEAF_NODE;      // make it a leaf node
+      }
+      rc = SearchInternal(newnode, key, value, promotedKey);
+      if (rc!=ERROR_NOERROR) { 
+        return rc;
+      }
+      else
+      {
+        AddKeyVal(node, promotedKey, VALUE_T(), ptr);
+      }
+    }
+    break;
+  case BTREE_LEAF_NODE:
+    // check if this is the first key of the node
+    if(b.info.numkeys == 0)
+    {
+      AddKeyVal(node, key, value, 0);
+      promotedKey = key; // update the promoted key as the inserted key
+      return ERROR_NOSPACE; // ***make a new ERROR_T***
+    }
+    
+    // Otherwise check first if the node needs to be split
+    if(NeedToSplit(node))
+    {
+      rc = SplitNode(node, secondNode, promotedKey); //this will update promotedKey
+      if(rc != ERROR_NOERROR)
+      {
+        return rc;
+      }
+      if(key<promotedKey) // then check in node where key needs to be inserted
+      {
+            AddKeyVal(node, key, value, 0);
+            return ERROR_NOSPACE; // need to promote it
+      }
+        
+      
+      else  // check in secondNode where key needs to be inserted
+      {
+        rc = s.Unserialize(buffercache, secondNode);
+        if (rc!=ERROR_NOERROR) { 
+          return rc;
+        }
+        else
+        {
+              AddKeyVal(secondNode, key, value, 0);
+              return ERROR_NOSPACE; // need to promote it
+            
+          }
+        }
+      }
+    
+    else  // no need to split node, no promotion, just insert it
+    {
+        AddKeyVal(node, key, value, 0);
+        return ERROR_NOERROR;
+            
+    }
+    
+    return ERROR_NONEXISTENT;
+    break;
+  default:
+    // We can't be looking at anything other than a root, internal, or leaf
+    return ERROR_INSANE;
+    break;
+  }  
+
+  return ERROR_INSANE;
+}
 
 // Handles the recursive traversal of the tree, and placing the key/value pair in the correct node
 ERROR_T BTreeIndex::SearchInternal2(SIZE_T node,
@@ -871,8 +1058,6 @@ ERROR_T BTreeIndex::SanityCheck() const
   KEY_T testkey2;
   SIZE_T ptr;
   VALUE_T value;
-  int count = 0;
-  int comp_count;
 
 
   rc = b.Unserialize(buffercache, superblock.info.rootnode);  // start at the root
@@ -903,24 +1088,14 @@ ERROR_T BTreeIndex::SanityCheck() const
       if (rc) {  return rc; }
 
       // check for errors on each of the children
-      rc = SanityCheckRecurse(ptr, testkey1, count);
+      rc = SanityCheckRecurse(ptr, testkey1);
       if (rc) {  return rc; }
-      
-      // check that the tree is balanced
-      if(offset == 0)
-      {
-        comp_count = count;
-      }
-      else if(!(comp_count == count))
-      {
-        return ERROR_BADCONFIG;
-      }
     }
   // if it made it this far there are no errors
   return ERROR_NOERROR;
 }
   
-ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &count) const
+ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key) const
 {
   BTreeNode b;
   ERROR_T rc;
@@ -929,6 +1104,7 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
   KEY_T testkey2;
   SIZE_T ptr;
   VALUE_T value;
+  ERROR_T rc1 = ERROR_BADCONFIG;
 
   rc = b.Unserialize(buffercache, node);
   if (rc) {  return rc; }
@@ -967,15 +1143,8 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
       if (rc) {  return rc; }
 
       // check for errors on each of the children
-      count = count + 1;
-      rc = SanityCheckRecurse(ptr, testkey1, count);
+      rc = SanityCheckRecurse(ptr, testkey1);
       if (rc) {  return rc; }
-    }
-
-    // check that the parent key is the largest key (the last key) in the node
-    if(!(testkey1 == key))
-    {
-      return ERROR_BADCONFIG;
     }
     //if it got here there are no errors
     return ERROR_NOERROR;
@@ -993,15 +1162,17 @@ ERROR_T BTreeIndex::SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &
       {
         return ERROR_BADCONFIG;
       }
+      
+      if(testkey2 == key)   // the key from the parent node must be somewhere in the leaf
+      {
+        rc1 = ERROR_NOERROR;
+      }
+
       rc = b.GetKey(offset, testkey1);  // update the comparison key
       if (rc) {  return rc; }
     }
-
-    //check that the parent key is the largest key (the last key) in the node
-    if(!(testkey1 == key))
-    {
-      return ERROR_BADCONFIG;
-    }
+    // if the key from the parent was never found in the leaf, return an error
+    if(rc1) {return rc1;}
     
     //if it got here there are no errors
     return ERROR_NOERROR;

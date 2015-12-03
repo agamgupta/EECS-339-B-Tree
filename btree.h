@@ -79,7 +79,7 @@ class BTreeIndex {
 
   ERROR_T      AddKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode);
 
-  ERROR_T     SanityCheckRecurse(const SIZE_T node, const KEY_T key, int &count) const;
+  ERROR_T     SanityCheckRecurse(const SIZE_T node, const KEY_T key) const;
 
   ERROR_T     ConstLookup(const SIZE_T node, const KEY_T key) const;
 
